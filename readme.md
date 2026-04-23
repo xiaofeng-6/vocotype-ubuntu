@@ -134,6 +134,16 @@ uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python main.py
 ```
 
+### 3.1 Ubuntu 桌面应用（.deb）
+
+在仓库根目录执行 `bash packaging/ubuntu/build-deb.sh` 生成 `vocotype-ubuntu_*_all.deb`。安装：
+
+```bash
+sudo apt install ./vocotype-ubuntu_0.1.0_all.deb
+```
+
+首次安装会在 `/opt/vocotype-ubuntu/.venv` 内执行 `pip install -r requirements.txt`，**需要联网**。安装完成后可在应用菜单启动 **VocoType**，或运行 `vocotype`。Linux 全局热键若需提升权限，仍可按上文使用 `sudo -E` 方式自行包装。
+
 ### 4. 与 Conda 的取舍
 
 | | uv + `.venv` | Conda |

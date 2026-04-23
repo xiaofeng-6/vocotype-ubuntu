@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VocoType
+Name[zh_CN]=VocoType 语音输入
+Comment=Local offline speech-to-text input
+Comment[zh_CN]=离线语音转文字并注入当前窗口
+Exec=/usr/bin/vocotype
+Icon=vocotype
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+Keywords=speech;voice;input;asr;offline;
+StartupNotify=true

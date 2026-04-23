@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+# 卸载时保留 /opt/vocotype-ubuntu 下用户数据？当前由 dpkg 整目录删除，无额外操作
+exit 0

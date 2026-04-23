@@ -108,16 +108,22 @@ def ensure_logging_dir(config: Dict[str, Any]) -> str:
     日志目录相对于项目根目录（main.py 所在目录），而不是当前工作目录。
     这样即使从其他目录运行脚本，日志也能正确保存到项目目录下。
     """
-    log_dir = config["logging"].get("dir", "logs")
+    log_dir_cfg = config["logging"].get("dir", "logs")
+    app_install_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    installed_under_opt = app_install_root.startswith("/opt/")
     
     # 如果已经是绝对路径，直接使用
-    if os.path.isabs(log_dir):
-        pass
+    if os.path.isabs(log_dir_cfg):
+        log_dir = log_dir_cfg
     else:
-        # 相对路径：基于项目根目录（向上两级到达项目根目录）
-        # app/config.py -> app/ -> 项目根目录
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        log_dir = os.path.join(project_root, log_dir)
+        # 相对路径：开发运行时放项目目录；安装到 /opt 时改放用户目录，避免无写权限
+        if installed_under_opt:
+            log_dir = os.path.join(
+                os.path.expanduser("~/.local/state/vocotype-ubuntu"),
+                log_dir_cfg,
+            )
+        else:
+            log_dir = os.path.join(app_install_root, log_dir_cfg)
     
     os.makedirs(log_dir, exist_ok=True)
     return log_dir

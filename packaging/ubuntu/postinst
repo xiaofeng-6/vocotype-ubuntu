@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+APP=/opt/vocotype-ubuntu
+
+case "$1" in
+  configure)
+    # 首次安装或升级后确保 venv 与依赖可用（需联网拉取 pip 包）
+    if [ ! -x "$APP/.venv/bin/python" ]; then
+      python3 -m venv "$APP/.venv"
+    fi
+    "$APP/.venv/bin/pip" install --upgrade pip setuptools wheel >/dev/null
+    "$APP/.venv/bin/pip" install -r "$APP/requirements.txt"
+    chmod -R a+rX "$APP" 2>/dev/null || true
+    ;;
+esac
+
+exit 0

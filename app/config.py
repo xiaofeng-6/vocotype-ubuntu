@@ -9,10 +9,11 @@ from typing import Any, Dict, Optional
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "hotkeys": {"toggle": "f2"},
+    "hotkeys": {"toggle": "f9"},
     "audio": {
         "sample_rate": 16000,
         "block_ms": 20,
+        # 麦克风：null 为自动枚举（sudo 下默认 “设备” 常为无效，会逐个试所有输入设备）；也可填整数下标
         "device": None,
         # 单次录音的最大大小（字节），默认20MB
         # 达到此限制后将自动停止录音并开始转录
@@ -25,6 +26,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "min_silence_ms": 200,
         "pad_ms": 200,
     },
+    # 转写调度：async=true 为后台队列（不阻塞热键，显“排队”）；false 为停录后立即转写（默认，无队列感）
+    "transcription": {"async": False},
     # 识别后端：funasr（本地离线）或 volcengine（火山引擎云端流式）
     "backend": "funasr",
     "asr": {
@@ -53,12 +56,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # 是否启用数字/格式规范化（ITN）
         "enable_itn": True,
     },
+    # 转写结果注入到「当前聚焦」的输入框 = 与日志「转写成功」完全同一段 str
+    # 推荐 method=paste: 只「复制 + 一次粘贴快捷键」整段，不逐字模拟（避免 Linux/输入法 叠字）
+    # paste_hotkey: dual=Ctrl+Shift+V（默认，适终端）| ctrl+v | ctrl+shift+v | hybrid=Shift+Insert
+    # 备选: "unicode" 仅 pynput+keyboard, "type" 仅模拟键入, "auto" 多路回退
     "output": {
         "dedupe": True,
         "max_history": 5,
         "min_chars": 1,
-        "method": "auto",
+        "method": "paste",
+        "paste_hotkey": "dual",
         "append_newline": False,
+        "use_clipboard": True,
+        # 仅对 unicode/ auto 的 pynput 逐字 生效(毫秒)
+        "pynput_char_delay_ms": 5,
     },
     "logging": {"dir": "logs", "level": "INFO"},
 }

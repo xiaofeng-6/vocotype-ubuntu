@@ -92,15 +92,19 @@ class TranscriptionWorker:
             logger.warning("max_session_bytes 配置非法，已回退至 20MB")
         self._session_bytes: int = 0
         
-        # 异步转录队列和工作线程
-        self._transcription_queue: "queue.Queue[Optional[np.ndarray]]" = queue.Queue(maxsize=10)
+        # 异步转录：true=后台队列；false=在 stop 内同步转写（默认，无“排队”感，推理一般很快）
+        self._transcription_async: bool = bool(
+            (self.config.get("transcription") or {}).get("async", False)
+        )
+        self._transcription_queue: Optional["queue.Queue[Optional[np.ndarray]]"] = None
         self._transcription_thread: Optional[threading.Thread] = None
-        self._transcription_running = threading.Event()
-        self._transcription_task_count = 0  # 已提交的任务计数
-        self._transcription_completed_count = 0  # 已完成的任务计数
-        
-        # 启动转录工作线程
-        self._start_transcription_worker()
+        self._transcription_running: Optional[threading.Event] = None
+        self._transcription_task_count = 0
+        self._transcription_completed_count = 0
+        if self._transcription_async:
+            self._transcription_queue = queue.Queue(maxsize=10)
+            self._transcription_running = threading.Event()
+            self._start_transcription_worker()
 
     def __del__(self) -> None:
         """析构函数，确保资源被清理"""
@@ -110,40 +114,51 @@ class TranscriptionWorker:
             logger.debug("析构函数清理时出错: %s", exc)
 
     def cleanup(self) -> None:
-        """清理所有资源，包括缓冲区、音频设备和 ASR 后端。"""
+        """清理所有资源。初始化中途失败时也会尽量释放已创建的对象，避免 __del__ 再报错。"""
         logger.debug("开始清理 TranscriptionWorker 资源")
         try:
-            # 停止录音
-            if self._running.is_set():
+            if hasattr(self, "_running") and self._running.is_set():
                 self.stop()
-            
-            # 停止转录工作线程
-            self._stop_transcription_worker()
-            
-            # 清理缓冲区
-            with self._buffer_lock:
-                self._buffer.clear()
-            
-            # 停止音频捕获
-            if hasattr(self, 'audio'):
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("停止录音: %s", exc)
+
+        try:
+            if self._transcription_async and hasattr(self, "_transcription_queue") and self._transcription_queue is not None:
+                self._stop_transcription_worker()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("停止转录线程: %s", exc)
+
+        try:
+            if hasattr(self, "_buffer_lock"):
+                with self._buffer_lock:
+                    self._buffer.clear()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("清理缓冲区: %s", exc)
+
+        try:
+            if hasattr(self, "audio"):
                 self.audio.stop()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("停止音频: %s", exc)
 
-            # 清理 ASR 后端资源
-            if self.fun_server is not None:
+        try:
+            if getattr(self, "fun_server", None) is not None:
                 self.fun_server.cleanup()
-            elif self._volcengine_client is not None:
+            elif getattr(self, "_volcengine_client", None) is not None:
                 self._volcengine_client.cleanup()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("清理 ASR 后端: %s", exc)
 
-            logger.debug("TranscriptionWorker 资源清理完成")
-        except Exception as exc:
-            logger.error("清理资源时出错: %s", exc)
+        logger.debug("TranscriptionWorker 资源清理完成")
 
     def _start_transcription_worker(self) -> None:
         """启动转录工作线程"""
+        if not self._transcription_running:
+            return
         if self._transcription_running.is_set():
             logger.debug("转录工作线程已在运行")
             return
-        
+
         self._transcription_running.set()
         self._transcription_thread = threading.Thread(
             target=self._transcription_worker_loop,
@@ -159,10 +174,11 @@ class TranscriptionWorker:
         Args:
             timeout: 等待队列清空的超时时间（秒），默认3秒
         """
-        if not self._transcription_running.is_set():
+        if not self._transcription_queue or not self._transcription_running or not self._transcription_running.is_set():
             logger.debug("转录工作线程未运行")
             return
-        
+
+        assert self._transcription_queue is not None
         pending = self._transcription_queue.qsize()
         if pending > 0:
             logger.info(f"正在停止转录工作线程，队列中还有 {pending} 个任务，最多等待 {timeout} 秒...")
@@ -198,11 +214,15 @@ class TranscriptionWorker:
     def _transcription_worker_loop(self) -> None:
         """转录工作线程的主循环，从队列中获取音频并转录"""
         logger.info("转录工作线程开始运行")
-        
-        while self._transcription_running.is_set():
+
+        if not self._transcription_queue or not self._transcription_running:
+            return
+        tq = self._transcription_queue
+        tr = self._transcription_running
+        while tr.is_set():
             try:
                 # 从队列获取音频数据（阻塞等待，超时1秒）
-                samples = self._transcription_queue.get(timeout=1.0)
+                samples = tq.get(timeout=1.0)
                 
                 # None是停止信号
                 if samples is None:
@@ -210,12 +230,15 @@ class TranscriptionWorker:
                     break
                 
                 # 执行转录
-                logger.info(f"开始处理转录任务 #{self._transcription_completed_count + 1}，队列剩余: {self._transcription_queue.qsize()}")
-                self._transcribe_once(samples)
-                self._transcription_completed_count += 1
-                
-                # 标记任务完成
-                self._transcription_queue.task_done()
+                logger.info(
+                    "开始处理转录任务 #%s，队列剩余: %s",
+                    self._transcription_completed_count + 1,
+                    tq.qsize(),
+                )
+                try:
+                    self._transcribe_once(samples)
+                finally:
+                    tq.task_done()
                 
             except queue.Empty:
                 # 队列为空，继续等待
@@ -287,26 +310,33 @@ class TranscriptionWorker:
                 self._current_session_id = None
             return
 
-        # 将音频数据提交到转录队列，立即返回（异步处理）
         try:
-            self._transcription_queue.put_nowait(combined)
-            # 更新计数器时需要锁保护
+            if self._transcription_async and self._transcription_queue is not None:
+                try:
+                    self._transcription_queue.put_nowait(combined)
+                    with self._state_lock:
+                        self._transcription_task_count += 1
+                        task_count = self._transcription_task_count
+                    logger.info(
+                        "录音已提交到转录队列（session_id=%s，任务 #%s），队列待处理: %s",
+                        session_id,
+                        task_count,
+                        self._transcription_queue.qsize(),
+                    )
+                except queue.Full:
+                    logger.error("转录队列已满，无法提交 (session_id=%s)", session_id)
+            else:
+                with self._state_lock:
+                    self._transcription_task_count += 1
+                try:
+                    self._transcribe_once(combined)
+                except Exception:  # noqa: BLE001
+                    logger.exception("同步转写失败 (session_id=%s)", session_id)
+                    raise
+                logger.debug("转写完成 (session_id=%s)", session_id)
+        finally:
             with self._state_lock:
-                self._transcription_task_count += 1
-                task_count = self._transcription_task_count
-            logger.info(
-                "录音已提交到转录队列（session_id=%s，任务 #%s），队列中有 %s 个待处理任务",
-                session_id,
-                task_count,
-                self._transcription_queue.qsize(),
-            )
-        except queue.Full:
-            logger.error("转录队列已满，无法提交新任务 (session_id=%s)！请等待当前转录完成。", session_id)
-            # 即使队列满了，也不阻塞用户，只是记录错误
-        
-        # 最后清理session_id
-        with self._state_lock:
-            self._current_session_id = None
+                self._current_session_id = None
 
     def _capture_loop(self) -> None:
         queue_obj = self.audio.queue
@@ -445,7 +475,10 @@ class TranscriptionWorker:
         self._dispatch_result(asr_result, asr_result.get("inference_latency", inference_latency))
 
     def _dispatch_result(self, asr_result: dict, inference_latency: float) -> None:
-        """将 ASR 结果包装成 TranscriptionResult 并回调。"""
+        """将 ASR 结果包装成 TranscriptionResult 并回调。
+
+        在调用 on_result 之前更新 completed 计数，这样「转写成功」里的统计与本次结果一致（同步/异步均适用）。
+        """
         if not asr_result.get("success"):
             result = TranscriptionResult(
                 text="",
@@ -464,6 +497,9 @@ class TranscriptionWorker:
                 confidence=asr_result.get("confidence", 0.0),
             )
 
+        with self._state_lock:
+            self._transcription_completed_count += 1
+
         if self.on_result:
             try:
                 self.on_result(result)
@@ -476,12 +512,16 @@ class TranscriptionWorker:
 
     @property
     def is_transcribing(self) -> bool:
-        """是否有转录任务正在进行或等待中"""
+        """是否有转录任务正在进行或等待中（仅异步模式有队列时有效）。"""
+        if not self._transcription_async or self._transcription_queue is None:
+            return False
         return not self._transcription_queue.empty()
 
     @property
     def pending_transcriptions(self) -> int:
-        """返回队列中等待转录的任务数"""
+        """返回队列中等待转录的任务数（同步模式恒为 0）。"""
+        if not self._transcription_async or self._transcription_queue is None:
+            return 0
         return self._transcription_queue.qsize()
 
     @property

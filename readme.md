@@ -86,31 +86,61 @@ _所有 VocoType 版本共享同一个强大的核心引擎。_
 
 ### 1. 环境依赖
 
-- Python 3.12
-- 我们强烈建议使用 `uv` 或 `venv` 创建虚拟环境。
+- Python 3.12 推荐；最低 Python 3.10 也可尝试
+- 推荐使用 **[uv](https://docs.astral.sh/uv/)** 管理解释器与依赖：比 Conda 更轻、启动快、项目里只要一个 **`.venv`** 目录，不污染系统 Python
 
-### 2. 克隆与安装
+### 2. 安装 uv（三选一）
 
 ```bash
-# 1. 克隆仓库
+# 官方单文件安装器（推荐，不依赖本机已装 Python）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# 装好后把 $HOME/.local/bin 加进 PATH（安装脚本会提示）
+```
+
+或 **`pipx install uv`**；或用 **`python3 -m pip install --user uv`**（不如前两种独立）。
+
+若本机没有 3.12，可用 **uv 自带安装解释器**（Linux/macOS/Windows 均可）：
+
+```bash
+uv python install 3.12
+```
+
+### 3. 克隆、建环境、装依赖、运行
+
+```bash
 git clone https://github.com/233stone/vocotype-cli.git
-cd vocotype-cli
+cd vocotype-cli   # 或你本地的 vocotype-ubuntu 等目录
 
-# 2. (推荐) 创建并激活虚拟环境
-pip install uv
-uv venv --python 3.12
-source .venv/bin/activate  # macOS/Linux
-# 或者 .\.venv\Scripts\activate  (Windows)
+# 在仓库根目录建虚拟环境并指向 3.12
+uv venv -p 3.12
+source .venv/bin/activate   # Linux / macOS
+# Windows:  .\.venv\Scripts\activate
 
-# 3. 安装依赖
+# 用 uv 调用 pip 安装本仓库依赖（与 pip 一样，但更快、能锁解析）
 uv pip install -r requirements.txt
 
-# 4. 运行
+# 运行（Linux 全局热键常需: sudo -E .venv/bin/python main.py，保留你当前环境变量）
 python main.py
 
-# 保存数据集运行
+# 保存训练/数据集
 python main.py --save-dataset
 ```
+
+不激活 venv 时也可**显式指定解释器**：
+
+```bash
+uv venv -p 3.12
+uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python main.py
+```
+
+### 4. 与 Conda 的取舍
+
+| | uv + `.venv` | Conda |
+| :--- | :--- | :--- |
+| 体积 / 管理 | 极轻、按项目分目录 | 基环境较大、多环境占盘 |
+| 适合 | 单项目、纯 PyPI 依赖 | 要科学计算全家桶、多语言栈 |
+| 建议 | 本项目默认推荐 | 若你整台机已经深度绑在 Conda 上也可继续用 |
 
 > **模型下载**：首次运行时，程序会自动下载约 500MB 的模型文件，请确保网络连接稳定。
 

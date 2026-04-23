@@ -1,6 +1,11 @@
+# jieba 等仍用 setup.py 装包时，若见 canonicalize_version(strip_trailing_zero=) 错误，需较新的 packaging
+packaging>=24.0
+
 sounddevice==0.5.2
 keyboard==0.13.5
 pyperclip==1.11.0
+# Linux/macOS: 剪贴板 Ctrl+V 与 unicode 回退
+pynput>=1.7.6
 librosa==0.11.0
 soundfile==0.13.1
 funasr_onnx==0.4.1
